@@ -28,7 +28,11 @@ import paho.mqtt.client as mqtt
 import argparse
 import time
 import logging
-import threading, queue, os
+import threading, os
+try:
+   import queue
+except ImportError:
+   import Queue as queue
 
 # --------------------------------------------------------------------------------
 
@@ -44,7 +48,7 @@ parser.add_argument("-p", help="MQTT port number (default=1883)", type=int, defa
 parser.add_argument("-u", help="MQTT username", default=None, dest="mqttUser")
 parser.add_argument("-P", help="MQTT password", default=None, dest="mqttPass")
 parser.add_argument("-t", help="MQTT topic (default=All toypics)", default="#", dest="mqttTopic")
-parser.add_argument("-l", help="Logg directory (default=data-logs)", default="data-logs", dest="logsFolder")
+parser.add_argument("-l", help="Logg data MQTT messages directory (default=data-logs)", default="data-logs", dest="logsFolder")
 parser.add_argument("-r", help="Number of logss per file (default=unlimited)", type=int, default=None, dest="numLogs")
 
 parser.add_argument("-nl", help="Add new line char on every mqtt messages", dest="newLine", action="store_true")
@@ -80,6 +84,13 @@ def on_connect(client, userdata, flags, rc):
         logging.error(" Could not connect to MQTT Broker !")
         programFinish() #kill the thread and exit the program
 
+# The callback when DISCONNECTED from server.
+def on_disconnect(client, userdata, msg):
+    logging.error("  Disconnected from the server !")
+    if runThreadWorker:
+        logging.error("  Lost connection - Trying to reconnect")
+        client.reconnect()
+
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
     #logging.debug("  MQTT msg received, queue it")
@@ -95,15 +106,18 @@ def logFile_Create ():
 
     #Create the folder
     try:
-        os.makedirs(fileFolder, exist_ok=True)
+        if not os.path.exists(fileFolder):
+            os.makedirs(fileFolder)
     except:
         raise
     #Open the file
+    filePath = fileFolder + "/" + fileName
+
     try:
-        f = open(fileFolder+"/"+fileName,'a')
+        f = open(filePath,'a')
     except:
         raise
-    logging.debug("  File created: " + fileFolder + "/" + fileName)
+    logging.debug("  File created: " + filePath )
     return True
 
 def logFile_Close():
@@ -200,15 +214,11 @@ logging.basicConfig(format="[%(asctime)s] %(message)s", level=levelLogging, date
 logging.info(" -- MQTT simple logger starting - v0.1 --")
 logging.info("INFO: to stop the program press CTR+C on the terminal window")
 
-# Logg file --------------------------------
-if not logFile_Create():
-    logging.error("Could not create the log file, check file permissions")
-    programFinish()
-
 # MQTT connection --------------------------
 client = mqtt.Client()
 client.on_connect = on_connect
 client.on_message = on_message
+client.on_disconnect = on_disconnect
 client.username_pw_set( args.mqttUser, args.mqttPass)
 
 try:
@@ -216,6 +226,11 @@ try:
     client.connect(args.mqttHost, args.mqttPort, 60)
 except Exception as e:
     logging.error("  Could not connect to MQTT mqttBroker : " + e.strerror)
+    programFinish()
+	
+# Logg file --------------------------------
+if not logFile_Create():
+    logging.error("Could not create the log file, check file permissions")
     programFinish()
 
 # Thread for the message processing ----------
@@ -232,7 +247,7 @@ t.start()
 # Main program ------------------------------
 try:
     while runThreadWorker :
-        client.loop()
+        client.loop_forever()
 except KeyboardInterrupt:
     logging.warning("Program interrrupted by keyboard")
 
